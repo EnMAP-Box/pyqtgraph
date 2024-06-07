@@ -493,10 +493,9 @@ class GraphicsItem(object):
 
         ## disconnect from previous view
         if oldView is not None:
-            for signal, slot in [('sigRangeChanged', self.viewRangeChanged),
-                                 ('sigDeviceRangeChanged', self.viewRangeChanged), 
-                                 ('sigTransformChanged', self.viewTransformChanged), 
-                                 ('sigDeviceTransformChanged', self.viewTransformChanged)]:
+            Device = 'Device' if hasattr(oldView, 'sigDeviceRangeChanged') else ''
+            for signal, slot in [(f'sig{Device}RangeChanged', self.viewRangeChanged),
+                                 (f'sig{Device}TransformChanged', self.viewTransformChanged)]:
                 try:
                     getattr(oldView, signal).disconnect(slot)
                 except (TypeError, AttributeError, RuntimeError):
@@ -552,7 +551,7 @@ class GraphicsItem(object):
     def viewTransformChanged(self):
         """
         Called whenever the transformation matrix of the view has changed.
-        (eg, the view range has changed or the view was resized)
+        For example, when the view range has changed or the view was resized.
         Invalidates the viewRect cache.
         """
         self._cachedView = None
