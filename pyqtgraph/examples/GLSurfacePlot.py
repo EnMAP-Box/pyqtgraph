@@ -1,12 +1,21 @@
 """
 This example demonstrates the use of GLSurfacePlotItem.
 """
+import sys
 
 import numpy as np
 
 import pyqtgraph as pg
+from pyqtgraph.Qt import QtGui
 import pyqtgraph.opengl as gl
 from pyqtgraph.Qt import QtCore
+
+if 'darwin' in sys.platform:
+    fmt = QtGui.QSurfaceFormat()
+    fmt.setRenderableType(fmt.RenderableType.OpenGL)
+    fmt.setProfile(fmt.OpenGLContextProfile.CoreProfile)
+    fmt.setVersion(4, 1)
+    QtGui.QSurfaceFormat.setDefaultFormat(fmt)
 
 ## Create a GL View widget to display data
 app = pg.mkQApp("GLSurfacePlot Example")
@@ -44,7 +53,7 @@ w.addItem(p2)
 z = pg.gaussianFilter(np.random.normal(size=(50,50)), (1,1))
 x = np.linspace(-12, 12, 50)
 y = np.linspace(-12, 12, 50)
-colors = np.ones((50,50,4), dtype=float)
+colors = np.ones((50,50,4), dtype=np.float32)
 colors[...,0] = np.clip(np.cos(((x.reshape(50,1) ** 2) + (y.reshape(1,50) ** 2)) ** 0.5), 0, 1)
 colors[...,1] = colors[...,0]
 

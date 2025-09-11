@@ -182,7 +182,7 @@ class Parameter(QtCore.QObject):
                                      (default=None; added in version 0.9.9)
         =======================      =========================================================
         """
-        QtCore.QObject.__init__(self)
+        super().__init__()
         
         self.opts = {
             'type': None,
@@ -198,9 +198,10 @@ class Parameter(QtCore.QObject):
             # The following intentionally excluded; each parameter type may have a different data type for limits.
             # 'limits': None,
         }
-        name = opts.get('name', None)
-        if not isinstance(name, str):
-            raise TypeError("Parameter must have a string name specified in opts.")
+        try:
+            name = opts['name']
+        except KeyError:
+            raise KeyError("Parameter must have a name specified")
         self.opts.update(opts)
         self.opts['name'] = None
 
@@ -214,14 +215,8 @@ class Parameter(QtCore.QObject):
 
         self.addChildren(self.opts.pop('children', []))
         if 'value' in self.opts and 'default' not in self.opts:
-            warnings.warn(
-                "Parameter has no default value. Pass a default, or use setDefault(). This will no longer set "
-                "an implicit default after January 2025.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
             self.opts['default'] = self.opts['value']
-        value = self.opts.get('value', self.opts.get('default', None))
+        value = self.opts.get('value', self.opts.get('default'))
         modified = 'value' in self.opts
         if value is not None:
             self.setValue(value)
@@ -342,14 +337,10 @@ class Parameter(QtCore.QObject):
         """
         Return the value of this Parameter. Raises ValueError if no value has been set.
         """
-        if 'value' not in self.opts:
-            warnings.warn(
-                "Parameter has no value set. Pass an initial value or default, or use setValue() or setDefault(). "
-                "This will be an error after January 2025.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        return self.opts.get('value')
+        try:
+            return self.opts['value']
+        except KeyError:
+            raise ValueError("No Value has been set")
 
     def getValues(self):
         """
@@ -419,7 +410,6 @@ class Parameter(QtCore.QObject):
             
             ptr = 0  ## pointer to first child that has not been restored yet
             foundChilds = set()
-            #print "==============", self.name()
             
             for ch in childState:
                 name = ch['name']
@@ -470,17 +460,13 @@ class Parameter(QtCore.QObject):
 
     def defaultValue(self):
         """Return the default value for this parameter. Raises ValueError if no default."""
-        if 'default' not in self.opts:
-            warnings.warn("Parameter has no default value. This will be a ValueError after January 2025.",
-                          DeprecationWarning,
-                          stacklevel=2)
         return self.opts.get('default')
         
     def setDefault(self, val, updatePristineValues=False):
         """Set the default value for this parameter. If updatePristineValues is True, then
         any values that haven't been modified since the last time they were reset to default
         will be updated to the new default value (default: False)."""
-        if self.opts.get('default', None) == val:
+        if self.opts.get('default') == val:
             return
         self.opts['default'] = val
         if 'value' not in self.opts or (updatePristineValues and not self.valueModifiedSinceResetToDefault()):
@@ -497,7 +483,7 @@ class Parameter(QtCore.QObject):
 
     def hasDefault(self):
         """Returns True if this parameter has a default value."""
-        return self.opts.get('default', None) is not None
+        return self.opts.get('default') is not None
         
     def valueIsDefault(self):
         """Returns True if this parameter's value is equal to the default value."""
@@ -575,30 +561,39 @@ class Parameter(QtCore.QObject):
         self.treeStateChanges.append((self, changeDesc, data))
         self.emitTreeChanges()
 
+    @QtCore.Slot(object, object)
     def _emitValueChanged(self, param, data):
         self.emitStateChanged("value", data)
 
+    @QtCore.Slot(object, object, object)
     def _emitChildAddedChanged(self, param, *data):
         self.emitStateChanged("childAdded", data)
 
+    @QtCore.Slot(object, object)
     def _emitChildRemovedChanged(self, param, data):
         self.emitStateChanged("childRemoved", data)
 
+    @QtCore.Slot(object, object)
     def _emitParentChanged(self, param, data):
         self.emitStateChanged("parent", data)
 
+    @QtCore.Slot(object, object)
     def _emitLimitsChanged(self, param, data):
         self.emitStateChanged("limits", data)
 
+    @QtCore.Slot(object, object)
     def _emitDefaultChanged(self, param, data):
         self.emitStateChanged("default", data)
 
+    @QtCore.Slot(object, object)
     def _emitNameChanged(self, param, data):
         self.emitStateChanged("name", data)
 
+    @QtCore.Slot(object, object)
     def _emitOptionsChanged(self, param, data):
         self.emitStateChanged("options", data)
 
+    @QtCore.Slot(object, object)
     def _emitContextMenuChanged(self, param, data):
         self.emitStateChanged("contextMenu", data)
 
@@ -849,6 +844,7 @@ class Parameter(QtCore.QObject):
         self.emitTreeChanges()
         
         
+    @QtCore.Slot(object, object)
     def treeStateChanged(self, param, changes):
         """
         Called when the state of any sub-parameter has changed. 

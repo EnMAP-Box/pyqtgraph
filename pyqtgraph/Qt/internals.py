@@ -1,5 +1,6 @@
 import ctypes
 import itertools
+import sys
 
 import numpy as np
 
@@ -175,17 +176,10 @@ class PrimitiveArray:
     def ndarray(self):
         # ndarray views are cheap to recreate each time
         if self.use_sip_array:
-            if (
-                sip.SIP_VERSION >= 0x60708 and 
-                np.__version__ != "1.22.4"  # TODO: remove me after numpy 1.23+
-            ):  # workaround for numpy/sip compatability issue
-                # see https://github.com/numpy/numpy/issues/21612
-                mv = self._siparray
-            else:
-                # sip.array prior to SIP_VERSION 6.7.8 had a buggy buffer protocol
-                # that set the wrong size.
-                # workaround it by going through a sip.voidptr
-                mv = sip.voidptr(self._siparray, self._capa*self._nfields*8)
+            # sip.array prior to SIP_VERSION 6.7.8 had a buggy buffer protocol
+            # that set the wrong size.
+            # workaround it by going through a sip.voidptr
+            mv = sip.voidptr(self._siparray, self._capa*self._nfields*8)
             # note that we perform the slicing by using only _size rows
             nd = np.frombuffer(mv, dtype=np.float64, count=self._size*self._nfields)
             return nd.reshape((-1, self._nfields))
@@ -229,3 +223,28 @@ class PrimitiveArray:
 
         else:
             return self.instances(),
+
+
+_qbytearray_leaks = None
+
+def qbytearray_leaks() -> bool:
+    global _qbytearray_leaks
+
+    if _qbytearray_leaks is None:
+        # When PySide{2,6} is built without Py_LIMITED_API,
+        # it leaks memory when a memory view to a QByteArray
+        # object is taken.
+        # See https://github.com/pyqtgraph/pyqtgraph/issues/3265
+        # and PYSIDE-3031
+        # Note: official builds of PySide{2,6} by Qt are built with
+        # the limited api, and thus do not leak.
+        if QT_LIB.startswith("PySide"):
+            # probe whether QByteArray leaks
+            qba = QtCore.QByteArray()
+            ref0 = sys.getrefcount(qba)
+            memoryview(qba)
+            _qbytearray_leaks = sys.getrefcount(qba) > ref0
+        else:
+            _qbytearray_leaks = False
+
+    return _qbytearray_leaks

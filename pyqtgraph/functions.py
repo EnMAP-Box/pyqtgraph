@@ -17,7 +17,6 @@ from typing import TypeAlias, TypedDict
 import numpy as np
 
 from . import Qt, debug, getConfigOption, reload
-from .metaarray import MetaArray
 from .Qt import QT_LIB, QtCore, QtGui
 from .util.cupy_helper import getCupy
 
@@ -268,7 +267,7 @@ def mkColor(*args) -> QtGui.QColor:
      QColor          QColor instance; makes a copy.
     ================ ================================================
     """
-    err = 'Not sure how to make a color from "%s"' % str(args)
+    err = lambda: 'Not sure how to make a color from "%s"' % str(args)
     if len(args) == 1:
         if isinstance(args[0], str):
             c = args[0]
@@ -304,18 +303,18 @@ def mkColor(*args) -> QtGui.QColor:
             elif len(args[0]) == 2:
                 return intColor(*args[0])
             else:
-                raise TypeError(err)
+                raise TypeError(err())
         elif np.issubdtype(type(args[0]), np.integer):
             return intColor(args[0])
         else:
-            raise TypeError(err)
+            raise TypeError(err())
     elif len(args) == 3:
         r, g, b = args
         a = 255
     elif len(args) == 4:
         r, g, b, a = args
     else:
-        raise TypeError(err)
+        raise TypeError(err())
     args = [int(a) if np.isfinite(a) else 0 for a in (r, g, b, a)]
     return QtGui.QColor(*args)
 
@@ -652,8 +651,8 @@ def eq(a, b):
             return True
 
     # Avoid comparing large arrays against scalars; this is expensive and we know it should return False.
-    aIsArr = isinstance(a, (np.ndarray, MetaArray))
-    bIsArr = isinstance(b, (np.ndarray, MetaArray))
+    aIsArr = isinstance(a, np.ndarray)
+    bIsArr = isinstance(b, np.ndarray)
     if (aIsArr or bIsArr) and type(a) != type(b):
         return False
 
@@ -711,16 +710,13 @@ def eq(a, b):
         return e
     elif t is np.bool_:
         return bool(e)
-    elif isinstance(e, np.ndarray) or (hasattr(e, 'implements') and e.implements('MetaArray')):
+    elif isinstance(e, np.ndarray):
         try:   ## disaster: if a is an empty array and b is not, then e.all() is True
             if a.shape != b.shape:
                 return False
         except:
             return False
-        if (hasattr(e, 'implements') and e.implements('MetaArray')):
-            return e.asarray().all()
-        else:
-            return e.all()
+        return e.all()
     else:
         raise TypeError("== operator returned type %s" % str(type(e)))
 
@@ -1769,23 +1765,15 @@ def gaussianFilter(data, sigma):
     return filtered + baseline
     
     
-def downsample(data, n, axis=0, xvals='subsample'):
+def downsample(data, n, axis=0, xvals='subsample', *, nanPolicy='propagate'):
     """Downsample by averaging points together across axis.
     If multiple axes are specified, runs once per axis.
-    If a metaArray is given, then the axis values can be either subsampled
-    or downsampled to match.
     """
-    ma = None
-    if (hasattr(data, 'implements') and data.implements('MetaArray')):
-        ma = data
-        data = data.view(np.ndarray)
-        
-    
     if hasattr(axis, '__len__'):
         if not hasattr(n, '__len__'):
             n = [n]*len(axis)
         for i in range(len(axis)):
-            data = downsample(data, n[i], axis[i])
+            data = downsample(data, n[i], axis[i], nanPolicy=nanPolicy)
         return data
     
     if n <= 1:
@@ -1797,21 +1785,14 @@ def downsample(data, n, axis=0, xvals='subsample'):
     sl = [slice(None)] * data.ndim
     sl[axis] = slice(0, nPts*n)
     d1 = data[tuple(sl)]
-    #print d1.shape, s
     d1.shape = tuple(s)
-    d2 = d1.mean(axis+1)
-    
-    if ma is None:
-        return d2
+    if nanPolicy == 'propagate':
+        d2 = d1.mean(axis+1)
+    elif nanPolicy == 'omit':
+        d2 = np.nanmean(d1, axis+1)
     else:
-        info = ma.infoCopy()
-        if 'values' in info[axis]:
-            if xvals == 'subsample':
-                info[axis]['values'] = info[axis]['values'][::n][:nPts]
-            elif xvals == 'downsample':
-                info[axis]['values'] = downsample(info[axis]['values'], n)
-        return MetaArray(d2, info=info)
-
+        raise ValueError(f"Keyword argument {nanPolicy=} must be one of {'propagate', 'omit'}.")
+    return d2
 
 def _compute_backfill_indices(isfinite):
     # the presence of inf/nans result in an empty QPainterPath being generated
@@ -2063,15 +2044,22 @@ def arrayToQPath(x, y, connect='all', finiteCheck=True):
     if hasattr(path, 'reserve'):    # Qt 5.13
         path.reserve(n)
 
-    if hasattr(path, 'reserve') and getConfigOption('enableExperimental'):
+    if getConfigOption('enableExperimental'):
         backstore = None
         arr = Qt.internals.get_qpainterpath_element_array(path, n)
     else:
-        backstore = QtCore.QByteArray()
-        backstore.resize(4 + n*20 + 8)      # contents uninitialized
-        backstore.replace(0, 4, struct.pack('>i', n))
-        # cStart, fillRule (Qt.FillRule.OddEvenFill)
-        backstore.replace(4+n*20, 8, struct.pack('>ii', 0, 0))
+        if Qt.internals.qbytearray_leaks():
+            backstore = bytearray(4 + n*20 + 8) # initialized to zero
+            struct.pack_into('>i', backstore, 0, n)
+            # cStart, fillRule (Qt.FillRule.OddEvenFill)
+            struct.pack_into('>ii', backstore, 4+n*20, 0, 0)
+        else:
+            backstore = QtCore.QByteArray()
+            backstore.resize(4 + n*20 + 8)      # contents uninitialized
+            backstore.replace(0, 4, struct.pack('>i', n))
+            # cStart, fillRule (Qt.FillRule.OddEvenFill)
+            backstore.replace(4+n*20, 8, struct.pack('>ii', 0, 0))
+
         arr = np.frombuffer(backstore, dtype=[('c', '>i4'), ('x', '>f8'), ('y', '>f8')],
             count=n, offset=4)
 
@@ -2092,8 +2080,12 @@ def arrayToQPath(x, y, connect='all', finiteCheck=True):
 
     # decide which points are connected by lines
     if connect == 'pairs':
+        mask = 1                # by default connect every 2nd point to every 1st one
+        if finiteCheck and not all_isfinite:
+            mask = isfinite[:len(x)//2 * 2]             # ensure even number of points
+            mask = mask[0::2] & mask[1::2]              # don't connect non-finite pairs
         arr['c'][0::2] = 0
-        arr['c'][1::2] = 1  # connect every 2nd point to every 1st one
+        arr['c'][1::2] = mask
     elif connect == 'array':
         # Let's call a point with either x or y being nan is an invalid point.
         # A point will anyway not connect to an invalid point regardless of the
@@ -2106,6 +2098,10 @@ def arrayToQPath(x, y, connect='all', finiteCheck=True):
 
     if isinstance(backstore, QtCore.QByteArray):
         ds = QtCore.QDataStream(backstore)
+        ds >> path
+    elif isinstance(backstore, bytearray):
+        qba = QtCore.QByteArray(backstore)  # a copy is made here
+        ds = QtCore.QDataStream(qba)
         ds >> path
     return path
 
@@ -2848,7 +2844,7 @@ def isosurface(data, level):
     cutEdges = np.zeros([x+1 for x in index.shape]+[3], dtype=np.uint32)
     edges = edgeTable[index]
     for i, shift in enumerate(edgeShifts[:12]):        
-        slices = [slice(shift[j],cutEdges.shape[j]+(shift[j]-1)) for j in range(3)]
+        slices = [slice(int(shift[j]),cutEdges.shape[j]+(int(shift[j])-1)) for j in range(3)]
         cutEdges[slices[0], slices[1], slices[2], shift[3]] += edges & 2**i
     
     ## for each cut edge, interpolate to see where exactly the edge is cut and generate vertex positions
