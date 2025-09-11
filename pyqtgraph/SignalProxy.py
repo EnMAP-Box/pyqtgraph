@@ -52,9 +52,9 @@ class SignalProxy(QtCore.QObject):
     def setDelay(self, delay):
         self.delay = delay
 
-    # @QtCore.Slot()
-    # @QtCore.Slot(object)
-    # @QtCore.Slot(object, object)
+    @QtCore.Slot()
+    @QtCore.Slot(object)
+    @QtCore.Slot(object, object)
     def signalReceived(self, *args):
         """Received signal. Cancel previous timer and store args to be
         forwarded later."""
